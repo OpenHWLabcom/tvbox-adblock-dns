@@ -1,0 +1,163 @@
+<!doctype html><html lang=zh><head><meta charset=utf-8><title>安装教程-机顶盒变去广告DNS盒子</title><style>body{font-family:"Noto Sans CJK SC","Microsoft YaHei",sans-serif;max-width:820px;margin:24px auto;padding:0 20px;line-height:1.7;color:#222}h1{font-size:24px}code,pre{background:#f4f4f4;border-radius:6px}pre{padding:10px;overflow:auto}blockquote{border-left:4px solid #ccc;margin:8px 0;padding:2px 12px;color:#555}li{margin:2px 0}</style></head><body><h1>安装教程 —— 把安卓机顶盒变成「去广告 DNS 盒子」（旁路由 / AdGuard Home）</h1>
+
+<blockquote>OpenHW Lab · 智能硬件开放实验室 · 面向普通用户 / 开发者。约 30–50 分钟。</blockquote>
+<blockquote>用一台吃灰的<b>安卓机顶盒</b>，做成一台 <b>局域网 DNS 服务器</b>：全家设备<b>自动去广告、防跟踪</b>，</blockquote>
+<blockquote>一次配置、全屋生效，手机/电视/电脑都干净。进阶可当&quot;旁路由&quot;。</blockquote>
+<blockquote>本项目在 <b>B860AV1.1-T2</b>（中兴微 ZX296715 / <b>Android 7.1 / armv8</b>）实测通过。</blockquote>
+
+<hr>
+
+<h2>0. 你需要</h2>
+
+<li>一台<b>已 root</b> 的安卓机顶盒（能开 ADB；<b>不刷机</b>）。</li>
+<li>已搭好的 <b>Linux 子系统（chroot Ubuntu）</b>（参见系列其它教程 / 系统改造手册）。</li>
+<li>电脑一台（装 <code>adb</code>；用 SSH 也行）。</li>
+<li>路由器能改 <b>DHCP 的 DNS</b>（把下发的 DNS 指到盒子）。</li>
+
+<blockquote><b>总思路</b>：子系统里跑 <b>AdGuard Home</b>（DNS :53 + 管理页 :3000），</blockquote>
+<blockquote>把它的<b>上游 DNS 改成 TCP</b>（老盒子 UDP 常被封）、加<b>广告过滤列表</b>；</blockquote>
+<blockquote>再把家里路由器的 <b>DHCP DNS 指向盒子</b> → 全家生效。</blockquote>
+
+<hr>
+
+<h2>1. 认清你的盒子（1 分钟）</h2>
+
+<pre>
+getprop ro.product.cpu.abi     # armv7 / arm64（决定下哪个 AdGuard 包）
+getprop ro.build.version.release
+free -m | head -2
+</pre>
+<blockquote>AdGuard Home 是<b>单文件二进制</b>，很轻，1G 内存的盒子跑它无压力。</blockquote>
+
+<hr>
+
+<h2>2. 控制通道（ADB / SSH）</h2>
+
+<p>盒子开「ADB 调试」→ 电脑：</p>
+<pre>
+adb connect &lt;盒子IP&gt;:5555 &amp;&amp; adb devices
+# 或：ssh root@&lt;盒子IP&gt;   （登录即进子系统）
+</pre>
+
+<hr>
+
+<h2>3. 取 AdGuard Home</h2>
+
+<p>AdGuard Home 只有 <b>https 下载</b>，而老盒子子系统常<b>只通 HTTP/80</b> → 在<b>电脑上</b>下好再传进盒子：</p>
+
+<pre>
+# 电脑上（有 https）：到 github.com/AdguardTeam/AdGuardHome/releases 下
+#   AdGuardHome_linux_arm64.tar.gz   （armv7 盒子用 ..._linux_armv7.tar.gz）
+# 传进子系统 /root：
+adb push AdGuardHome_linux_arm64.tar.gz /data/linux/root/adg.tgz
+# 或 scp AdGuardHome_linux_arm64.tar.gz root@&lt;盒子IP&gt;:/root/adg.tgz
+</pre>
+
+<p>盒子子系统里解压：</p>
+<pre>
+cd /root &amp;&amp; tar xzf adg.tgz &amp;&amp; ls AdGuardHome/
+./AdGuardHome/AdGuardHome --version
+</pre>
+
+<hr>
+
+<h2>4. 首次配置（用 API 免网页向导）</h2>
+
+<p>先后台跑起来（首次是&quot;设置模式&quot;，只开 :3000）：</p>
+<pre>
+cd /root/AdGuardHome &amp;&amp; nohup ./AdGuardHome &gt;/root/adg.log 2&gt;&amp;1 &amp;
+</pre>
+
+<p>用 <code>安装文件/adg_setup.py</code> 一步配置（web :3000 / dns :53 / 管理员）：</p>
+<pre>
+scp 安装文件/adg_setup.py root@&lt;盒子IP&gt;:/root/
+ssh root@&lt;盒子IP&gt; &quot;python3 /root/adg_setup.py 你的密码&quot;
+</pre>
+<p>（脚本等价于向 <code>POST /control/install/configure</code> 提交配置。）</p>
+
+<hr>
+
+<h2>5. ⭐ 把上游 DNS 改成 TCP（关键！）</h2>
+
+<p>老盒子子系统里 <b>UDP 常被封</b>（DNS 查询发不出去）→ 必须用 <b>TCP 上游</b>，否则解析超时：</p>
+
+<pre>
+scp 安装文件/adg_upstream.py root@&lt;盒子IP&gt;:/root/
+ssh root@&lt;盒子IP&gt; &quot;python3 /root/adg_upstream.py 你的密码&quot;
+</pre>
+<p>它把上游设为 <code>tcp://223.5.5.5</code> / <code>tcp://119.29.29.29</code> / <code>tcp://114.114.114.114</code>。</p>
+
+<p>验证（在电脑上查盒子）：</p>
+<pre>
+nslookup example.com &lt;盒子IP&gt;
+</pre>
+<p>能解析出地址就说明 DNS 服务通了。</p>
+
+<hr>
+
+<h2>6. 加广告过滤列表</h2>
+
+<p>AdGuard 的默认列表是 <b>https</b>（老盒子下不了）。用 <b>http 列表</b>：</p>
+<pre>
+scp 安装文件/adg_filters.py root@&lt;盒子IP&gt;:/root/
+ssh root@&lt;盒子IP&gt; &quot;python3 /root/adg_filters.py 你的密码&quot;
+</pre>
+<p>默认加了两个 http 列表：<code>pgl.yoyo.org</code>（≈3500 条）+ <code>someonewhocares.org</code>（≈1.3 万条）。</p>
+
+<p>验证拦截：</p>
+<pre>
+nslookup doubleclick.net &lt;盒子IP&gt;     # 应返回 0.0.0.0（被拦）
+nslookup example.com   &lt;盒子IP&gt;       # 应正常解析
+</pre>
+
+<hr>
+
+<h2>7. 设为&quot;全家 DNS&quot;</h2>
+
+<p>把<b>路由器的 DHCP 设置</b>里，下发的 <b>DNS 改成盒子的 IP</b>（如 <code>192.168.31.161</code>）。</p>
+<p>这样家里所有设备（手机/电视/电脑）自动用盒子做 DNS → 全屋去广告。</p>
+
+<li>只做 DNS（推荐起步）：改 DHCP DNS 即可。</li>
+<li><b>完整旁路由</b>（可选进阶）：再把设备<b>网关</b>也指向盒子（盒子做转发/分流）——需更多网络配置。</li>
+
+<blockquote>⚠️ 盒子是 DNS <b>单点</b>：建议在路由器里设<b>备用 DNS</b>（如 223.5.5.5），以防盒子关机时断解析。</blockquote>
+<blockquote>⚠️ 部分 App 用<b>硬编码 IP/DoH</b> 绕过 DNS，拦不到；视频前贴片/YouTube 广告也拦不全。</blockquote>
+
+<hr>
+
+<h2>8. 开机自启</h2>
+
+<p>把 <code>安装文件/3-开机自启.sh</code> 并入子系统的启动链（拉起 AdGuard Home）：</p>
+<pre>
+# 3-开机自启.sh 内容要点：
+pgrep -f &quot;[A]dGuardHome&quot; &gt;/dev/null || ( cd /root/AdGuardHome &amp;&amp; nohup ./AdGuardHome &gt;/root/adg.log 2&gt;&amp;1 &amp; )
+</pre>
+<p><code>4-开机兜底.sh</code> 是盒子侧（Android）挂载+启动脚本模板，按你盒子的启动链放置。</p>
+
+<p>重启一次验证：盒子重启后能继续解析（<code>nslookup</code> 到盒子）。</p>
+
+<hr>
+
+<h2>9. 使用 / 管理</h2>
+
+<p>| 用途 | 地址 |</p>
+<p>|---|---|</p>
+<p>| <b>AdGuard Home 管理页</b>（看拦截统计/规则/设备） | <code>http://&lt;盒子IP&gt;:3000/</code>（账号 admin / 你设的密码） |</p>
+<p>| <b>DNS 服务</b> | <code>&lt;盒子IP&gt;:53</code>（路由器 DHCP 指向它） |</p>
+
+<p>管理页可看：总查询量、<b>拦截比例</b>、拦截排行、每台设备的查询、被拦域名；也能加/减规则、设家长控制。</p>
+
+<hr>
+
+<h2>10. 恢复 / 卸载</h2>
+
+<p><b>不刷机、不改固件</b>，全部可逆：</p>
+<li>停服务：<code>pkill -f AdGuardHome</code></li>
+<li>路由器 DHCP 的 DNS 改回原样（或自动获取）</li>
+<li>删 <code>/root/AdGuardHome</code> 与启动脚本里那行即可。</li>
+
+<hr>
+
+<blockquote>有问题先看 <b><code>常见问题.md</code></b>。更多见 <code>开发者资料/</code>（系统改造手册 / 关键坑与经验 / 源码）。</blockquote>
+<blockquote>本项目开源（MIT）——OpenHW Lab · openhwlab.com</blockquote>
+</body></html>
